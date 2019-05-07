@@ -30,8 +30,6 @@ Component({
     width: 100,
     height: 100,
 
-    index: 0,
-    imageList: [],
     tempFileList: [],
 
     isPainting: false
@@ -56,39 +54,42 @@ Component({
           clearInterval(inter)
           this.ctx.clearActions()
           this.ctx.save()
-          this.getImageList(views)
-          this.downLoadImages(0)
+          this.getImagesInfo(views)
         }
       }, 100)
     },
-    getImageList (views) {
+    getImagesInfo (views) {
       const imageList = []
       for (let i = 0; i < views.length; i++) {
         if (views[i].type === 'image') {
-          imageList.push(views[i].url)
+          imageList.push(this.getImageInfo(views[i].url))
         }
       }
-      this.setData({
-        imageList
-      })
-    },
-    downLoadImages (index) {
-      const { imageList, tempFileList } = this.data
-      if (index < imageList.length) {
-        // console.log(imageList[index])
-        this.getImageInfo(imageList[index]).then(file => {
-          tempFileList.push(file)
-          this.setData({
-            tempFileList
+
+      const loadTask = []
+      for (let i = 0; i < Math.ceil(imageList.length / 8); i++) {
+        loadTask.push(new Promise((resolve, reject) => {
+          Promise.all(imageList.splice(i * 8, 8)).then(res => {
+            resolve(res)
+          }).catch(res => {
+            reject(res)
           })
-          this.downLoadImages(index + 1)
-        })
-      } else {
-        this.startPainting()
+        }))
       }
+      Promise.all(loadTask).then(res => {
+        let tempFileList = []
+        for (let i = 0; i < res.length; i++) {
+          tempFileList = tempFileList.concat(res[i])
+        }
+        this.setData({
+          tempFileList
+        })
+        this.startPainting()
+      })
     },
     startPainting () {
       const { tempFileList, painting: { views } } = this.data
+      console.log(tempFileList)
       for (let i = 0, imageIndex = 0; i < views.length; i++) {
         if (views[i].type === 'image') {
           this.drawImage({
@@ -113,19 +114,33 @@ Component({
       }
       this.ctx.draw(false, () => {
         wx.setStorageSync('canvasdrawer_pic_cache', this.cache)
-        this.saveImageToLocal()
+        const system = wx.getSystemInfoSync().system
+        if (/ios/i.test(system)) {
+          this.saveImageToLocal()
+        } else {
+          // 延迟保存图片，解决安卓生成图片错位bug。
+          setTimeout(() => {
+            this.saveImageToLocal()
+          }, 800)
+        }
       })
     },
     drawImage (params) {
       this.ctx.save()
-      const { url, top = 0, left = 0, width = 0, height = 0, borderRadius = 0 } = params
+      const { url, top = 0, left = 0, width = 0, height = 0, borderRadius = 0, deg = 0 } = params
       // if (borderRadius) {
       //   this.ctx.beginPath()
       //   this.ctx.arc(left + borderRadius, top + borderRadius, borderRadius, 0, 2 * Math.PI)
       //   this.ctx.clip()
       //   this.ctx.drawImage(url, left, top, width, height)
       // } else {
-      this.ctx.drawImage(url, left, top, width, height)
+      if (deg !== 0) {
+        this.ctx.translate(left + width/2, top + height/2)
+        this.ctx.rotate(deg * Math.PI / 180)
+        this.ctx.drawImage(url, -width/2, -height/2, width, height)
+      } else {
+        this.ctx.drawImage(url, left, top, width, height)
+      }
       // }
       this.ctx.restore()
     },
@@ -259,7 +274,6 @@ Component({
             this.setData({
               showCanvas: false,
               isPainting: false,
-              imageList: [],
               tempFileList: []
             })
             this.triggerEvent('getImage', {tempFilePath: res.tempFilePath, errMsg: 'canvasdrawer:ok'})
